@@ -60,6 +60,8 @@ func TestHistogramMetricsExposed(t *testing.T) {
 					10 * time.Millisecond,
 					12 * time.Millisecond,
 				},
+				SampleCount:  3,
+				SampleSumSec: 0.030,
 			},
 		},
 		labels: map[string]map[string]string{

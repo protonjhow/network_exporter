@@ -26,6 +26,8 @@ func TestTCPHistogramEmitted(t *testing.T) {
 					5 * time.Millisecond,
 					7 * time.Millisecond,
 				},
+				SampleCount:  3,
+				SampleSumSec: 0.015,
 			},
 		},
 		labels: map[string]map[string]string{

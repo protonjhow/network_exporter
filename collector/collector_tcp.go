@@ -60,7 +60,7 @@ func getTCPDescriptors(labels prometheus.Labels) *tcpDescriptorSet {
 // TCP prom
 type TCP struct {
 	Monitor          *monitor.TCPPort
-	HistogramBuckets []float64
+	HistogramBuckets []float64 // Captured at startup; changes require restart
 	metrics          map[string]*tcp.TCPPortReturn
 	labels           map[string]map[string]string
 }
@@ -120,14 +120,10 @@ func (p *TCP) Collect(ch chan<- prometheus.Metric) {
 				buckets = defaultHistogramBuckets()
 			}
 			counts := computeBucketCounts(metric.Samples, buckets)
-			var sum float64
-			for _, s := range metric.Samples {
-				sum += s.Seconds()
-			}
 			ch <- prometheus.MustNewConstHistogram(
 				descs.timeHist,
-				uint64(len(metric.Samples)),
-				sum,
+				metric.SampleCount,
+				metric.SampleSumSec,
 				counts,
 				l...,
 			)

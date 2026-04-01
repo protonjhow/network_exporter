@@ -70,7 +70,7 @@ func getMTRDescriptors(labels prometheus.Labels) *mtrDescriptorSet {
 // MTR prom
 type MTR struct {
 	Monitor          *monitor.MTR
-	HistogramBuckets []float64
+	HistogramBuckets []float64 // Captured at startup; changes require restart
 	metrics          map[string]*mtr.MtrResult
 	labels           map[string]map[string]string
 }

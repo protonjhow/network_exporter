@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/syepes/network_exporter/monitor"
@@ -24,12 +23,12 @@ var (
 	icmpStateDesc          = prometheus.NewDesc("ping_up", "Exporter state", nil, nil)
 	icmpMutex              = &sync.Mutex{}
 	// Descriptor cache for custom labels
-	icmpDescCache      = make(map[string]*descriptorSet)
+	icmpDescCache      = make(map[string]*icmpDescriptorSet)
 	icmpDescCacheMutex sync.RWMutex
 )
 
 // descriptorSet holds all descriptors for a specific label set
-type descriptorSet struct {
+type icmpDescriptorSet struct {
 	status         *prometheus.Desc
 	rtt            *prometheus.Desc
 	rttHist        *prometheus.Desc
@@ -40,7 +39,7 @@ type descriptorSet struct {
 }
 
 // getDescriptors returns cached or creates new descriptors for a label set
-func getDescriptors(labels prometheus.Labels) *descriptorSet {
+func getICMPDescriptors(labels prometheus.Labels) *icmpDescriptorSet {
 	// Create cache key from labels
 	cacheKey := fmt.Sprintf("%v", labels)
 
@@ -61,7 +60,7 @@ func getDescriptors(labels prometheus.Labels) *descriptorSet {
 		return descSet
 	}
 
-	descSet := &descriptorSet{
+	descSet := &icmpDescriptorSet{
 		status:         prometheus.NewDesc("ping_status", "Ping Status", icmpLabelNames, labels),
 		rtt:            prometheus.NewDesc("ping_rtt_seconds", "Round Trip Time in seconds", append(icmpLabelNames, "type"), labels),
 		rttHist:        prometheus.NewDesc("ping_rtt_duration_seconds", "Histogram of round trip times in seconds", icmpLabelNames, labels),
@@ -77,7 +76,7 @@ func getDescriptors(labels prometheus.Labels) *descriptorSet {
 // PING prom
 type PING struct {
 	Monitor          *monitor.PING
-	HistogramBuckets []float64
+	HistogramBuckets []float64 // Captured at startup; changes require restart
 	metrics          map[string]*ping.PingResult
 	labels           map[string]map[string]string
 }
@@ -120,7 +119,7 @@ func (p *PING) Collect(ch chan<- prometheus.Metric) {
 		l2 := prometheus.Labels(p.labels[target])
 
 		// Get cached descriptors for this label set
-		descs := getDescriptors(l2)
+		descs := getICMPDescriptors(l2)
 
 		if metric.Success {
 			ch <- prometheus.MustNewConstMetric(descs.status, prometheus.GaugeValue, 1, l...)
@@ -157,38 +156,4 @@ func (p *PING) Collect(ch chan<- prometheus.Metric) {
 		}
 	}
 	ch <- prometheus.MustNewConstMetric(icmpTargetsDesc, prometheus.GaugeValue, float64(len(targets)))
-}
-
-func defaultHistogramBuckets() []float64 {
-	return []float64{
-		0.0001,  // 100us
-		0.00025, // 250us
-		0.0005,  // 500us
-		0.001,   // 1ms
-		0.0025,  // 2.5ms
-		0.005,   // 5ms
-		0.01,    // 10ms
-		0.025,   // 25ms
-		0.05,    // 50ms
-		0.1,     // 100ms
-		0.25,    // 250ms
-		0.5,     // 500ms
-		1.0,     // 1s
-	}
-}
-
-func computeBucketCounts(samples []time.Duration, buckets []float64) map[float64]uint64 {
-	counts := make(map[float64]uint64, len(buckets))
-	for _, b := range buckets {
-		counts[b] = 0
-	}
-	for _, s := range samples {
-		sec := s.Seconds()
-		for _, b := range buckets {
-			if sec <= b {
-				counts[b]++
-			}
-		}
-	}
-	return counts
 }
