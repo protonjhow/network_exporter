@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/syepes/network_exporter/monitor"
@@ -18,6 +19,7 @@ var (
 	icmpSntFailSummaryDesc = prometheus.NewDesc("ping_rtt_snt_fail_count", "Packet sent fail count", icmpLabelNames, nil)
 	icmpSntTimeSummaryDesc = prometheus.NewDesc("ping_rtt_snt_seconds", "Packet sent time total", icmpLabelNames, nil)
 	icmpLossDesc           = prometheus.NewDesc("ping_loss_percent", "Packet loss in percent", icmpLabelNames, nil)
+	icmpRttHistDesc        = prometheus.NewDesc("ping_rtt_duration_seconds", "Histogram of round trip times in seconds", icmpLabelNames, nil)
 	icmpTargetsDesc        = prometheus.NewDesc("ping_targets", "Number of active targets", nil, nil)
 	icmpStateDesc          = prometheus.NewDesc("ping_up", "Exporter state", nil, nil)
 	icmpMutex              = &sync.Mutex{}
@@ -30,6 +32,7 @@ var (
 type descriptorSet struct {
 	status         *prometheus.Desc
 	rtt            *prometheus.Desc
+	rttHist        *prometheus.Desc
 	sntSummary     *prometheus.Desc
 	sntFailSummary *prometheus.Desc
 	sntTimeSummary *prometheus.Desc
@@ -61,6 +64,7 @@ func getDescriptors(labels prometheus.Labels) *descriptorSet {
 	descSet := &descriptorSet{
 		status:         prometheus.NewDesc("ping_status", "Ping Status", icmpLabelNames, labels),
 		rtt:            prometheus.NewDesc("ping_rtt_seconds", "Round Trip Time in seconds", append(icmpLabelNames, "type"), labels),
+		rttHist:        prometheus.NewDesc("ping_rtt_duration_seconds", "Histogram of round trip times in seconds", icmpLabelNames, labels),
 		sntSummary:     prometheus.NewDesc("ping_rtt_snt_count", "Packet sent count", icmpLabelNames, labels),
 		sntFailSummary: prometheus.NewDesc("ping_rtt_snt_fail_count", "Packet sent fail count", icmpLabelNames, labels),
 		sntTimeSummary: prometheus.NewDesc("ping_rtt_snt_seconds", "Packet sent time total", icmpLabelNames, labels),
@@ -72,15 +76,17 @@ func getDescriptors(labels prometheus.Labels) *descriptorSet {
 
 // PING prom
 type PING struct {
-	Monitor *monitor.PING
-	metrics map[string]*ping.PingResult
-	labels  map[string]map[string]string
+	Monitor          *monitor.PING
+	HistogramBuckets []float64
+	metrics          map[string]*ping.PingResult
+	labels           map[string]map[string]string
 }
 
 // Describe prom
 func (p *PING) Describe(ch chan<- *prometheus.Desc) {
 	ch <- icmpStatusDesc
 	ch <- icmpRttDesc
+	ch <- icmpRttHistDesc
 	ch <- icmpLossDesc
 	ch <- icmpTargetsDesc
 	ch <- icmpStateDesc
@@ -134,6 +140,55 @@ func (p *PING) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(descs.sntFailSummary, prometheus.GaugeValue, float64(metric.SntFailSummary), l...)
 		ch <- prometheus.MustNewConstMetric(descs.sntTimeSummary, prometheus.GaugeValue, metric.SntTimeSummary.Seconds(), l...)
 		ch <- prometheus.MustNewConstMetric(descs.loss, prometheus.GaugeValue, metric.DropRate, l...)
+
+		if len(metric.AllTime) > 0 {
+			buckets := p.HistogramBuckets
+			if len(buckets) == 0 {
+				buckets = defaultHistogramBuckets()
+			}
+			counts := computeBucketCounts(metric.AllTime, buckets)
+			ch <- prometheus.MustNewConstHistogram(
+				descs.rttHist,
+				uint64(metric.SntSummary-metric.SntFailSummary),
+				metric.SumTime.Seconds(),
+				counts,
+				l...,
+			)
+		}
 	}
 	ch <- prometheus.MustNewConstMetric(icmpTargetsDesc, prometheus.GaugeValue, float64(len(targets)))
+}
+
+func defaultHistogramBuckets() []float64 {
+	return []float64{
+		0.0001,  // 100us
+		0.00025, // 250us
+		0.0005,  // 500us
+		0.001,   // 1ms
+		0.0025,  // 2.5ms
+		0.005,   // 5ms
+		0.01,    // 10ms
+		0.025,   // 25ms
+		0.05,    // 50ms
+		0.1,     // 100ms
+		0.25,    // 250ms
+		0.5,     // 500ms
+		1.0,     // 1s
+	}
+}
+
+func computeBucketCounts(samples []time.Duration, buckets []float64) map[float64]uint64 {
+	counts := make(map[float64]uint64, len(buckets))
+	for _, b := range buckets {
+		counts[b] = 0
+	}
+	for _, s := range samples {
+		sec := s.Seconds()
+		for _, b := range buckets {
+			if sec <= b {
+				counts[b]++
+			}
+		}
+	}
+	return counts
 }

@@ -154,7 +154,7 @@ func startServer() {
 	reg.MustRegister(collectors.NewGoCollector())
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	reg.MustRegister(&collector.MTR{Monitor: monitorMTR})
-	reg.MustRegister(&collector.PING{Monitor: monitorPING})
+	reg.MustRegister(&collector.PING{Monitor: monitorPING, HistogramBuckets: sc.Cfg.Conf.HistogramBuckets})
 	reg.MustRegister(&collector.TCP{Monitor: monitorTCP})
 	reg.MustRegister(&collector.HTTPGet{Monitor: monitorHTTPGet})
 	h := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
