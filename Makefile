@@ -1,5 +1,5 @@
 BUILDX_VER=v0.29.1
-IMAGE_NAME=syepes/network_exporter
+IMAGE_NAME=ghcr.io/protonjhow/network_exporter
 VERSION?=latest
 
 install:
