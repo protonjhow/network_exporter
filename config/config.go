@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -59,9 +60,10 @@ type ICMP struct {
 }
 
 type Conf struct {
-	Refresh           duration `yaml:"refresh" json:"refresh" default:"0s"`
-	Nameserver        string   `yaml:"nameserver" json:"nameserver"`
-	NameserverTimeout duration `yaml:"nameserver_timeout" json:"nameserver_timeout" default:"250ms"`
+	Refresh           duration  `yaml:"refresh" json:"refresh" default:"0s"`
+	Nameserver        string    `yaml:"nameserver" json:"nameserver"`
+	NameserverTimeout duration  `yaml:"nameserver_timeout" json:"nameserver_timeout" default:"250ms"`
+	HistogramBuckets  []float64 `yaml:"histogram_buckets" json:"histogram_buckets"`
 }
 
 type Config struct {
@@ -182,6 +184,17 @@ func (sc *SafeConfig) ReloadConfig(logger *slog.Logger, confFile string, confFil
 
 	if err := defaults.Set(c); err != nil {
 		return fmt.Errorf("setting defaults: %s", err)
+	}
+
+	if len(c.Conf.HistogramBuckets) == 0 {
+		c.Conf.HistogramBuckets = []float64{
+			0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005,
+			0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0,
+		}
+	} else {
+		if err := validateHistogramBuckets(c.Conf.HistogramBuckets); err != nil {
+			return fmt.Errorf("parsing config file: %s", err)
+		}
 	}
 
 	// Validate and Filter config
@@ -325,4 +338,17 @@ func HasDuplicateTargets(m Targets) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func validateHistogramBuckets(buckets []float64) error {
+	sort.Float64s(buckets)
+	for i, b := range buckets {
+		if b <= 0 {
+			return fmt.Errorf("histogram_buckets values must be positive, got %f", b)
+		}
+		if i > 0 && b == buckets[i-1] {
+			return fmt.Errorf("histogram_buckets contains duplicate value %f", b)
+		}
+	}
+	return nil
 }

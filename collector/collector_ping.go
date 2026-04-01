@@ -18,18 +18,20 @@ var (
 	icmpSntFailSummaryDesc = prometheus.NewDesc("ping_rtt_snt_fail_count", "Packet sent fail count", icmpLabelNames, nil)
 	icmpSntTimeSummaryDesc = prometheus.NewDesc("ping_rtt_snt_seconds", "Packet sent time total", icmpLabelNames, nil)
 	icmpLossDesc           = prometheus.NewDesc("ping_loss_percent", "Packet loss in percent", icmpLabelNames, nil)
+	icmpRttHistDesc        = prometheus.NewDesc("ping_rtt_duration_seconds", "Histogram of round trip times in seconds", icmpLabelNames, nil)
 	icmpTargetsDesc        = prometheus.NewDesc("ping_targets", "Number of active targets", nil, nil)
 	icmpStateDesc          = prometheus.NewDesc("ping_up", "Exporter state", nil, nil)
 	icmpMutex              = &sync.Mutex{}
 	// Descriptor cache for custom labels
-	icmpDescCache      = make(map[string]*descriptorSet)
+	icmpDescCache      = make(map[string]*icmpDescriptorSet)
 	icmpDescCacheMutex sync.RWMutex
 )
 
 // descriptorSet holds all descriptors for a specific label set
-type descriptorSet struct {
+type icmpDescriptorSet struct {
 	status         *prometheus.Desc
 	rtt            *prometheus.Desc
+	rttHist        *prometheus.Desc
 	sntSummary     *prometheus.Desc
 	sntFailSummary *prometheus.Desc
 	sntTimeSummary *prometheus.Desc
@@ -37,7 +39,7 @@ type descriptorSet struct {
 }
 
 // getDescriptors returns cached or creates new descriptors for a label set
-func getDescriptors(labels prometheus.Labels) *descriptorSet {
+func getICMPDescriptors(labels prometheus.Labels) *icmpDescriptorSet {
 	// Create cache key from labels
 	cacheKey := fmt.Sprintf("%v", labels)
 
@@ -58,9 +60,10 @@ func getDescriptors(labels prometheus.Labels) *descriptorSet {
 		return descSet
 	}
 
-	descSet := &descriptorSet{
+	descSet := &icmpDescriptorSet{
 		status:         prometheus.NewDesc("ping_status", "Ping Status", icmpLabelNames, labels),
 		rtt:            prometheus.NewDesc("ping_rtt_seconds", "Round Trip Time in seconds", append(icmpLabelNames, "type"), labels),
+		rttHist:        prometheus.NewDesc("ping_rtt_duration_seconds", "Histogram of round trip times in seconds", icmpLabelNames, labels),
 		sntSummary:     prometheus.NewDesc("ping_rtt_snt_count", "Packet sent count", icmpLabelNames, labels),
 		sntFailSummary: prometheus.NewDesc("ping_rtt_snt_fail_count", "Packet sent fail count", icmpLabelNames, labels),
 		sntTimeSummary: prometheus.NewDesc("ping_rtt_snt_seconds", "Packet sent time total", icmpLabelNames, labels),
@@ -72,15 +75,17 @@ func getDescriptors(labels prometheus.Labels) *descriptorSet {
 
 // PING prom
 type PING struct {
-	Monitor *monitor.PING
-	metrics map[string]*ping.PingResult
-	labels  map[string]map[string]string
+	Monitor          *monitor.PING
+	HistogramBuckets []float64 // Captured at startup; changes require restart
+	metrics          map[string]*ping.PingResult
+	labels           map[string]map[string]string
 }
 
 // Describe prom
 func (p *PING) Describe(ch chan<- *prometheus.Desc) {
 	ch <- icmpStatusDesc
 	ch <- icmpRttDesc
+	ch <- icmpRttHistDesc
 	ch <- icmpLossDesc
 	ch <- icmpTargetsDesc
 	ch <- icmpStateDesc
@@ -114,7 +119,7 @@ func (p *PING) Collect(ch chan<- prometheus.Metric) {
 		l2 := prometheus.Labels(p.labels[target])
 
 		// Get cached descriptors for this label set
-		descs := getDescriptors(l2)
+		descs := getICMPDescriptors(l2)
 
 		if metric.Success {
 			ch <- prometheus.MustNewConstMetric(descs.status, prometheus.GaugeValue, 1, l...)
@@ -134,6 +139,25 @@ func (p *PING) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(descs.sntFailSummary, prometheus.GaugeValue, float64(metric.SntFailSummary), l...)
 		ch <- prometheus.MustNewConstMetric(descs.sntTimeSummary, prometheus.GaugeValue, metric.SntTimeSummary.Seconds(), l...)
 		ch <- prometheus.MustNewConstMetric(descs.loss, prometheus.GaugeValue, metric.DropRate, l...)
+
+		if len(metric.AllTime) > 0 {
+			buckets := p.HistogramBuckets
+			if len(buckets) == 0 {
+				buckets = defaultHistogramBuckets()
+			}
+			counts := computeBucketCounts(metric.AllTime, buckets)
+			successCount := metric.SntSummary - metric.SntFailSummary
+			if successCount < 0 {
+				successCount = 0
+			}
+			ch <- prometheus.MustNewConstHistogram(
+				descs.rttHist,
+				uint64(successCount),
+				metric.SumTime.Seconds(),
+				counts,
+				l...,
+			)
+		}
 	}
 	ch <- prometheus.MustNewConstMetric(icmpTargetsDesc, prometheus.GaugeValue, float64(len(targets)))
 }

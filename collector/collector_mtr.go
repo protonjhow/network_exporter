@@ -17,6 +17,7 @@ var (
 	mtrSntDesc     = prometheus.NewDesc("mtr_rtt_snt_count", "Round Trip Send Package Total", append(mtrLabelNames, "type"), nil)
 	mtrSntFailDesc = prometheus.NewDesc("mtr_rtt_snt_fail_count", "Round Trip Send Package Fail Total", append(mtrLabelNames, "type"), nil)
 	mtrSntTimeDesc = prometheus.NewDesc("mtr_rtt_snt_seconds", "Round Trip Send Package Time Total", append(mtrLabelNames, "type"), nil)
+	mtrRttHistDesc = prometheus.NewDesc("mtr_rtt_duration_seconds", "Histogram of per-hop round trip times in seconds", mtrLabelNames, nil)
 	mtrHopsDesc    = prometheus.NewDesc("mtr_hops", "Number of route hops", []string{"name", "target"}, nil)
 	mtrTargetsDesc = prometheus.NewDesc("mtr_targets", "Number of active targets", nil, nil)
 	mtrStateDesc   = prometheus.NewDesc("mtr_up", "Exporter state", nil, nil)
@@ -29,6 +30,7 @@ var (
 // mtrDescriptorSet holds all descriptors for a specific label set
 type mtrDescriptorSet struct {
 	rtt     *prometheus.Desc
+	rttHist *prometheus.Desc
 	hops    *prometheus.Desc
 	snt     *prometheus.Desc
 	sntFail *prometheus.Desc
@@ -55,6 +57,7 @@ func getMTRDescriptors(labels prometheus.Labels) *mtrDescriptorSet {
 
 	descSet := &mtrDescriptorSet{
 		rtt:     prometheus.NewDesc("mtr_rtt_seconds", "Round Trip Time in seconds", append(mtrLabelNames, "type"), labels),
+		rttHist: prometheus.NewDesc("mtr_rtt_duration_seconds", "Histogram of per-hop round trip times in seconds", mtrLabelNames, labels),
 		hops:    prometheus.NewDesc("mtr_hops", "Number of route hops", []string{"name", "target"}, labels),
 		snt:     prometheus.NewDesc("mtr_rtt_snt_count", "Round Trip Send Package Total", mtrLabelNames, labels),
 		sntFail: prometheus.NewDesc("mtr_rtt_snt_fail_count", "Round Trip Send Package Fail Total", mtrLabelNames, labels),
@@ -66,14 +69,16 @@ func getMTRDescriptors(labels prometheus.Labels) *mtrDescriptorSet {
 
 // MTR prom
 type MTR struct {
-	Monitor *monitor.MTR
-	metrics map[string]*mtr.MtrResult
-	labels  map[string]map[string]string
+	Monitor          *monitor.MTR
+	HistogramBuckets []float64 // Captured at startup; changes require restart
+	metrics          map[string]*mtr.MtrResult
+	labels           map[string]map[string]string
 }
 
 // Describe prom
 func (p *MTR) Describe(ch chan<- *prometheus.Desc) {
 	ch <- mtrDesc
+	ch <- mtrRttHistDesc
 	ch <- mtrHopsDesc
 	ch <- mtrTargetsDesc
 	ch <- mtrStateDesc
@@ -121,6 +126,25 @@ func (p *MTR) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.MustNewConstMetric(descs.rtt, prometheus.GaugeValue, hop.CorrectedSDTime.Seconds(), append(ll, "csd")...)
 			ch <- prometheus.MustNewConstMetric(descs.rtt, prometheus.GaugeValue, hop.RangeTime.Seconds(), append(ll, "range")...)
 			ch <- prometheus.MustNewConstMetric(descs.rtt, prometheus.GaugeValue, float64(hop.Loss), append(ll, "loss")...)
+
+			if len(hop.AllTime) > 0 {
+				buckets := p.HistogramBuckets
+				if len(buckets) == 0 {
+					buckets = defaultHistogramBuckets()
+				}
+				counts := computeBucketCounts(hop.AllTime, buckets)
+				successCount := hop.Snt - hop.SntFail
+				if successCount < 0 {
+					successCount = 0
+				}
+				ch <- prometheus.MustNewConstHistogram(
+					descs.rttHist,
+					uint64(successCount),
+					hop.SumTime.Seconds(),
+					counts,
+					ll...,
+				)
+			}
 		}
 
 		for ttl, summary := range metric.HopSummaryMap {

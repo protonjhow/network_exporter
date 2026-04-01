@@ -13,6 +13,7 @@ import (
 var (
 	tcpLabelNames  = []string{"name", "target", "target_ip", "source_ip", "port"}
 	tcpTimeDesc    = prometheus.NewDesc("tcp_connection_seconds", "Connection time in seconds", tcpLabelNames, nil)
+	tcpTimeHistDesc = prometheus.NewDesc("tcp_connection_duration_seconds", "Histogram of TCP connection times in seconds", tcpLabelNames, nil)
 	tcpStatusDesc  = prometheus.NewDesc("tcp_connection_status", "Connection Status", tcpLabelNames, nil)
 	tcpTargetsDesc = prometheus.NewDesc("tcp_targets", "Number of active targets", nil, nil)
 	tcpStateDesc   = prometheus.NewDesc("tcp_up", "Exporter state", nil, nil)
@@ -24,8 +25,9 @@ var (
 
 // tcpDescriptorSet holds all descriptors for a specific label set
 type tcpDescriptorSet struct {
-	time   *prometheus.Desc
-	status *prometheus.Desc
+	time     *prometheus.Desc
+	timeHist *prometheus.Desc
+	status   *prometheus.Desc
 }
 
 // getTCPDescriptors returns cached or creates new descriptors for a label set
@@ -47,8 +49,9 @@ func getTCPDescriptors(labels prometheus.Labels) *tcpDescriptorSet {
 	}
 
 	descSet := &tcpDescriptorSet{
-		time:   prometheus.NewDesc("tcp_connection_seconds", "Connection time in seconds", tcpLabelNames, labels),
-		status: prometheus.NewDesc("tcp_connection_status", "Connection Status", tcpLabelNames, labels),
+		time:     prometheus.NewDesc("tcp_connection_seconds", "Connection time in seconds", tcpLabelNames, labels),
+		timeHist: prometheus.NewDesc("tcp_connection_duration_seconds", "Histogram of TCP connection times in seconds", tcpLabelNames, labels),
+		status:   prometheus.NewDesc("tcp_connection_status", "Connection Status", tcpLabelNames, labels),
 	}
 	tcpDescCache[cacheKey] = descSet
 	return descSet
@@ -56,14 +59,16 @@ func getTCPDescriptors(labels prometheus.Labels) *tcpDescriptorSet {
 
 // TCP prom
 type TCP struct {
-	Monitor *monitor.TCPPort
-	metrics map[string]*tcp.TCPPortReturn
-	labels  map[string]map[string]string
+	Monitor          *monitor.TCPPort
+	HistogramBuckets []float64 // Captured at startup; changes require restart
+	metrics          map[string]*tcp.TCPPortReturn
+	labels           map[string]map[string]string
 }
 
 // Describe prom
 func (p *TCP) Describe(ch chan<- *prometheus.Desc) {
 	ch <- tcpTimeDesc
+	ch <- tcpTimeHistDesc
 	ch <- tcpStatusDesc
 	ch <- tcpTargetsDesc
 	ch <- tcpStateDesc
@@ -107,6 +112,21 @@ func (p *TCP) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.MustNewConstMetric(descs.status, prometheus.GaugeValue, 1, l...)
 		} else {
 			ch <- prometheus.MustNewConstMetric(descs.status, prometheus.GaugeValue, 0, l...)
+		}
+
+		if len(metric.Samples) > 0 {
+			buckets := p.HistogramBuckets
+			if len(buckets) == 0 {
+				buckets = defaultHistogramBuckets()
+			}
+			counts := computeBucketCounts(metric.Samples, buckets)
+			ch <- prometheus.MustNewConstHistogram(
+				descs.timeHist,
+				metric.SampleCount,
+				metric.SampleSumSec,
+				counts,
+				l...,
+			)
 		}
 	}
 	ch <- prometheus.MustNewConstMetric(tcpTargetsDesc, prometheus.GaugeValue, float64(len(targets)))

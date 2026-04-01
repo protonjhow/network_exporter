@@ -134,6 +134,7 @@ ulimit -n 40000
 - `ping_rtt_snt_fail_count`:                       Packet sent fail count total
 - `ping_rtt_snt_seconds`:                          Packet sent time total in seconds
 - `ping_loss_percent`:                             Packet loss in percent
+- `ping_rtt_duration_seconds`:                     Histogram of round trip times in seconds
 
 ---
 
@@ -153,6 +154,7 @@ ulimit -n 40000
 - `mtr_rtt_snt_count`:                             Packet sent count total
 - `mtr_rtt_snt_fail_count`:                        Packet sent fail count total
 - `mtr_rtt_snt_seconds`:                           Packet sent time total in seconds
+- `mtr_rtt_duration_seconds`:                      Histogram of per-hop round trip times in seconds
 
 ---
 
@@ -160,6 +162,7 @@ ulimit -n 40000
 - `tcp_targets`                                    Number of active targets
 - `tcp_connection_status`                          Connection Status
 - `tcp_connection_seconds`                         Connection time in seconds
+- `tcp_connection_duration_seconds`                Histogram of TCP connection times in seconds
 
 ---
 
@@ -185,6 +188,48 @@ Each metric contains the below labels and additionally the ones added in the con
 - `port` (TCP: The target TCP Port)
 - `ttl` (MTR: Time to live)
 - `path` (MTR: Traceroute IP)
+
+### Histogram Metrics
+
+Histogram metrics enable percentile-based SLO alerting (p50/p95/p99). They are emitted alongside existing gauge metrics without any configuration changes.
+
+**Customizing bucket boundaries:**
+
+```yaml
+conf:
+  histogram_buckets:
+    - 0.0005
+    - 0.001
+    - 0.005
+    - 0.01
+    - 0.05
+    - 0.1
+    - 0.5
+    - 1.0
+```
+
+Default buckets: `[0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]`
+
+**Note:** Changes to `histogram_buckets` require a restart. This setting is not picked up by config reload.
+
+**Example PromQL queries:**
+
+```promql
+# p50 ICMP latency
+histogram_quantile(0.5, rate(ping_rtt_duration_seconds_bucket[5m]))
+
+# p99 ICMP latency
+histogram_quantile(0.99, rate(ping_rtt_duration_seconds_bucket[5m]))
+
+# Apdex-style: proportion of pings under 10ms
+sum(rate(ping_rtt_duration_seconds_bucket{le="0.01"}[5m]))
+/ sum(rate(ping_rtt_duration_seconds_count[5m]))
+
+# p95 TCP connection time
+histogram_quantile(0.95, rate(tcp_connection_duration_seconds_bucket[5m]))
+```
+
+**Cardinality note:** Each histogram target adds `len(buckets) + 3` time series (one per bucket + count + sum + +Inf). With 13 default buckets and 1000 targets, that's ~16k additional series.
 
 ## Building and running the software
 
@@ -281,6 +326,7 @@ conf:
   refresh: 15m
   nameserver: 192.168.0.1:53 # Optional
   nameserver_timeout: 250ms # Optional
+  # histogram_buckets: [0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0] # Optional
 
 # Specific Protocol settings
 icmp:
