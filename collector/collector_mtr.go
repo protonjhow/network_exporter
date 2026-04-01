@@ -133,9 +133,13 @@ func (p *MTR) Collect(ch chan<- prometheus.Metric) {
 					buckets = defaultHistogramBuckets()
 				}
 				counts := computeBucketCounts(hop.AllTime, buckets)
+				successCount := hop.Snt - hop.SntFail
+				if successCount < 0 {
+					successCount = 0
+				}
 				ch <- prometheus.MustNewConstHistogram(
 					descs.rttHist,
-					uint64(hop.Snt-hop.SntFail),
+					uint64(successCount),
 					hop.SumTime.Seconds(),
 					counts,
 					ll...,

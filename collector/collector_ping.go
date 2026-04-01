@@ -146,9 +146,13 @@ func (p *PING) Collect(ch chan<- prometheus.Metric) {
 				buckets = defaultHistogramBuckets()
 			}
 			counts := computeBucketCounts(metric.AllTime, buckets)
+			successCount := metric.SntSummary - metric.SntFailSummary
+			if successCount < 0 {
+				successCount = 0
+			}
 			ch <- prometheus.MustNewConstHistogram(
 				descs.rttHist,
-				uint64(metric.SntSummary-metric.SntFailSummary),
+				uint64(successCount),
 				metric.SumTime.Seconds(),
 				counts,
 				l...,
