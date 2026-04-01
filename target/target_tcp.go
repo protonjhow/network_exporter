@@ -10,6 +10,8 @@ import (
 	"github.com/syepes/network_exporter/pkg/tcp"
 )
 
+const maxTCPSamples = 100
+
 // TCPPort Object
 type TCPPort struct {
 	logger            *slog.Logger
@@ -23,6 +25,7 @@ type TCPPort struct {
 	maxConcurrentJobs int
 	labels            map[string]string
 	result            *tcp.TCPPortReturn
+	samples           []time.Duration
 	stop              chan struct{}
 	wg                sync.WaitGroup
 	sync.RWMutex
@@ -116,6 +119,12 @@ func (t *TCPPort) portCheck() {
 	t.Lock()
 	defer t.Unlock()
 	t.result = data
+	if data != nil && data.Success {
+		t.samples = append(t.samples, data.ConTime)
+		if len(t.samples) > maxTCPSamples {
+			t.samples = t.samples[len(t.samples)-maxTCPSamples:]
+		}
+	}
 }
 
 // Compute returns the results of the TCP metrics
@@ -126,7 +135,10 @@ func (t *TCPPort) Compute() *tcp.TCPPortReturn {
 	if t.result == nil {
 		return nil
 	}
-	return t.result
+	result := *t.result
+	result.Samples = make([]time.Duration, len(t.samples))
+	copy(result.Samples, t.samples)
+	return &result
 }
 
 // Name returns name

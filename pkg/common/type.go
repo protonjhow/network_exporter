@@ -72,6 +72,7 @@ type IcmpHop struct {
 	SquaredDeviationTime time.Duration `json:"sd"`
 	UncorrectedSDTime    time.Duration `json:"usd"`
 	CorrectedSDTime      time.Duration `json:"csd"`
-	RangeTime            time.Duration `json:"range"`
-	Loss                 float64       `json:"loss"`
+	RangeTime            time.Duration   `json:"range"`
+	Loss                 float64         `json:"loss"`
+	AllTime              []time.Duration `json:"all_time"` // Raw RTT samples for histogram
 }

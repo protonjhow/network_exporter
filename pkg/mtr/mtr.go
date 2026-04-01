@@ -162,6 +162,8 @@ func runMtr(destAddr string, srcAddr string, icmpID int, options *MtrOptions, pa
 		hop.UncorrectedSDTime = time.Duration(common.TimeUncorrectedDeviation(mtrReturn.allTime))
 		hop.CorrectedSDTime = time.Duration(common.TimeCorrectedDeviation(mtrReturn.allTime))
 		hop.RangeTime = time.Duration(common.TimeRange(mtrReturn.allTime))
+		hop.AllTime = make([]time.Duration, len(mtrReturn.allTime))
+		copy(hop.AllTime, mtrReturn.allTime)
 
 		failSum := options.Count() - mtrReturn.succSum
 		hop.SntFail = failSum
