@@ -23,7 +23,8 @@ type PingResult struct {
 	RangeTime            time.Duration `json:"range"`
 	SntSummary           int           `json:"snt_summary"`
 	SntFailSummary       int           `json:"snt_fail_summary"`
-	SntTimeSummary       time.Duration `json:"snt_time_summary"`
+	SntTimeSummary       time.Duration   `json:"snt_time_summary"`
+	AllTime              []time.Duration `json:"all_time"` // Raw RTT samples for histogram
 }
 
 // PingReturn ICMP Response
