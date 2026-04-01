@@ -28,7 +28,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run tests
-        run: go test ./collector/ ./pkg/ping/ -v -race
+        run: go test ./collector/ ./pkg/ping/ ./config/ -v -race
 
   build:
     name: build and push image
